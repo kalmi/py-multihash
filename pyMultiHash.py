@@ -4,56 +4,59 @@ pyMultihash is a python implementation of the Multihash standard: https://github
 """
 
 import hashlib
-import base58
+from collections import namedtuple
+
+from base58 import b58encode, b58decode
+
+SHA1 = 0x11
+SHA256 = 0x12
+SHA512 = 0x13
+
+hash_functions = {
+    SHA1: hashlib.sha1,
+    SHA256: hashlib.sha256,
+    SHA512: hashlib.sha512,
+}
+
+DecodedMultihash = namedtuple('DecodedMultihash', ['code', 'digest'])
 
 
-"""
-These first two methods are kinda inefficient, but python is not really designed to mess with bytes
-"""
-def int_to_byte_array(big_int):
-    array = []
-    while big_int > 1:
-        array.append(big_int%256)
-        big_int/=256
-    print array
-    print len(array)
-    return array
+def decode(hashstr):
+    hashbytes = b58decode(hashstr)
 
-def bytes_to_long(bytes):
-    return int( ''.join('{:02x}'.format(x) for x in bytes), 16)
-
-
-"""
-    the main event!
-"""
-def parseHash(hashstr):
-    hashint = base58.decode(hashstr)
-    hashbytes = int_to_byte_array(hashint)
     if len(hashbytes) < 3:
         raise Exception("Multihash must be at least 3 bytes")
-    hash_func_id = hashbytes[0]
-    hash_length = hashbytes[1]
-    hash_contents = hashbytes[2:hash_length+2]
+    if len(hashbytes) > 129:
+        raise Exception("Multihash too long. must be < 129 bytes")
 
-    return bytes_to_long(hash_contents)
+    hash_func_id, hash_length = list(bytearray(hashbytes[0:2]))
+    hash_contents = hashbytes[2:]
 
-def genHash(bytes,func_id):
-    hashfunc = None
-    if func_id == 0x11:
-        #function is sha1
-        hashfunc = hashlib.sha1()
-    elif func_id == 0x12:
-        #function is sha256
-        hashfunc = hashlib.sha256()
-    elif func_id == 0x13:
-        #function is sha512
-        hashfunc = hashlib.sha512()
-    else:
-        raise Exception("Requested hash is not supported")
-    hashfunc.update(bytes)
-    data = hashfunc.digest()
-    size = hashfunc.digest_size
-    bytes = [func_id,size]+[ord(x) for x in data]
-    return base58.encode(bytes_to_long(bytes))
+    if hash_length != len(hashbytes)-2:
+        raise Exception("Multihash length inconsistent")
 
-print genHash("foo",0x12)
+    return DecodedMultihash(
+        code=hash_func_id,
+        digest=hash_contents,
+    )
+
+
+def encode(bytes, func_id=SHA256):
+    try:
+        hash_func = hash_functions[func_id]
+    except KeyError:
+        raise Exception("Requested hash type is not supported")
+
+    hasher = hash_func(bytes)
+    data = hasher.digest()
+    size = hasher.digest_size
+
+    if size > 127:
+        raise Exception("multihash does not yet support digests longer than 127 bytes")
+
+    output = chr(func_id).encode('ascii') + chr(size).encode('ascii') + data
+    return b58encode(output).encode('latin-1')
+
+if __name__ == "__main__":
+    print(encode(b"Hash me!") == b"QmepSLzJZG2LpJi9fak5Sgg4nQ2y7MaMGbD54DWyDrrxJt")
+    print(decode(b"QmepSLzJZG2LpJi9fak5Sgg4nQ2y7MaMGbD54DWyDrrxJt").digest == hashlib.sha256(b"Hash me!").digest())
